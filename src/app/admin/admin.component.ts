@@ -5,6 +5,8 @@ import { CategoryCreationRequest, CategoryService } from '../services/catagory.s
 import { ProductResponse } from '../response/product.response';
 import { CategoryResponse } from '../services/catagory.service';
 import { UserResponse, UserService, UserUpdateRequest } from '../services/user.service';
+import { OrderCreationRequest, OrderResponse, OrderStatus, OrderStatusUpdateRequest, PaginatedOrderResponse, PaginatedResponse } from '../response/order.resPonse';
+import { OrderService } from '../services/order.service';
 
 @Component({
   selector: 'app-admin',
@@ -13,7 +15,14 @@ import { UserResponse, UserService, UserUpdateRequest } from '../services/user.s
 })
 export class AdminComponent implements OnInit {
   // Active tab
-  activeTab: 'products' | 'categories' | 'users' = 'products';
+  // activeTab: 'products' | 'categories' | 'users' = 'products';
+  activeTab: 'products' | 'categories' | 'users' | 'orders' = 'products';
+
+ // Order management
+ orderForm: FormGroup;
+ orders: OrderResponse[] = [];
+ selectedOrder: OrderResponse | null = null;
+ orderStatuses = Object.values(OrderStatus);
 
   // Product management
   productForm: FormGroup;
@@ -34,7 +43,8 @@ export class AdminComponent implements OnInit {
     private fb: FormBuilder,
     private productService: ProductService,
     private categoryService: CategoryService,
-    private userService: UserService
+    private userService: UserService,
+    private orderService: OrderService
   ) {
     // Initialize product form
     this.productForm = this.fb.group({
@@ -60,12 +70,22 @@ export class AdminComponent implements OnInit {
       phone: ['']
     });
 
+    this.orderForm = this.fb.group({
+      id: [''],
+      userId: [''],
+      shippingAddress: ['', Validators.required],
+      phoneNumber: ['', Validators.required],
+      fullName: ['', Validators.required],
+      status: [OrderStatus.PENDING, Validators.required]
+    });
+
   }
 
   ngOnInit(): void {
     this.loadProducts();
     this.loadCategories();
     this.loadUsers();
+    this.loadOrders();
   }
 
   // Tab switching
@@ -328,18 +348,101 @@ export class AdminComponent implements OnInit {
     this.selectedUser = null;
   }
 
-  // Update existing method
-  switchTab(tab: 'products' | 'categories' | 'users'): void {
-    this.activeTab = tab;
-    this.resetForms();
+  loadOrders(): void {
+    this.orderService.getAllOrders().subscribe({
+      next: (response) => {
+        // Kiểm tra và truy cập mảng con data
+        if (response.data && Array.isArray(response.data.data)) {
+          console.log(response);
+          this.orders = response.data.data;
+        } else {
+          console.error('Unexpected response structure', response);
+          this.orders = []; // Fallback to an empty array
+        }
+      },
+      error: (err) => {
+        console.error('Error loading orders', err);
+        this.orders = []; // Ensure orders is an empty array on error
+      }
+    });
   }
 
-  resetForms(): void {
-    this.resetProductForm();
-    this.resetCategoryForm();
-    this.resetUserForm();
+  onOrderSubmit(): void {
+    if (this.orderForm.invalid) {
+      return;
+    }
+  
+    if (this.selectedOrder) {
+      // Kiểm tra nếu chỉ muốn cập nhật status
+      const statusValue = this.orderForm.get('status')?.value;
+      if (statusValue && statusValue !== this.selectedOrder.status) {
+        // Sử dụng updateOrderStatus với interface riêng
+        const statusUpdateRequest: OrderStatusUpdateRequest = {
+          status: statusValue
+        };
+  
+        this.orderService.updateOrderStatus(this.selectedOrder.id, statusUpdateRequest).subscribe({
+          next: () => {
+            this.loadOrders();
+            this.resetOrderForm();
+          },
+          error: (err) => {
+            console.error('Error updating order status', err);
+            // TODO: Add error handling toast/notification
+          }
+        });
+      } else {
+        // Nếu muốn cập nhật toàn bộ thông tin đơn hàng
+        const mappedOrderItems = this.selectedOrder.orderItems.map(item => ({
+          productId: parseInt(item.productId),
+          quantity: item.quantity,
+          price: item.price
+        }));
+  
+        const orderUpdateRequest: OrderCreationRequest = {
+          fullName: this.selectedOrder.fullName,
+          phoneNumber: this.selectedOrder.phoneNumber,
+          shippingAddress: this.selectedOrder.shippingAddress,
+          orderItems: mappedOrderItems,
+          status: this.selectedOrder.status // Thêm status nếu cần
+        };
+        
+        this.orderService.updateOrder(this.selectedOrder.id, orderUpdateRequest).subscribe({
+          next: () => {
+            this.loadOrders();
+            this.resetOrderForm();
+          },
+          error: (err) => {
+            console.error('Error updating order', err);
+            // TODO: Add error handling toast/notification
+          }
+        });
+      }
+    }
   }
 
+  editOrder(order: OrderResponse): void {
+    this.selectedOrder = order;
+    this.orderForm.patchValue({
+      id: order.id,
+      userId: order.userId,
+      shippingAddress: order.shippingAddress,
+      phoneNumber: order.phoneNumber,
+      fullName: order.fullName,
+      status: order.status
+    });
+  }
+  deleteOrder(orderId: string): void {
+    this.orderService.deleteOrder(orderId).subscribe({
+      next: () => {
+        this.loadOrders();
+      },
+      error: (err) => {
+        console.error('Error deleting order', err);
+        // TODO: Add error handling toast/notification
+      }
+    });
+  }
   // Form Reset Methods
   resetProductForm(): void {
     this.productForm.reset();
@@ -352,5 +455,25 @@ export class AdminComponent implements OnInit {
     this.selectedCategory = null;
   }
 
+  resetOrderForm(): void {
+    this.orderForm.reset({
+      status: OrderStatus.PENDING
+    });
+    this.selectedOrder = null;
+  }
+
+  // Update existing method
+  switchTab(tab: 'products' | 'categories' | 'users' | 'orders'): void {
+    this.activeTab = tab;
+    this.resetForms();
+  }
+
+  // Update resetForms method
+  resetForms(): void {
+    this.resetProductForm();
+    this.resetCategoryForm();
+    this.resetUserForm();
+    this.resetOrderForm();
+  }
 
 }
